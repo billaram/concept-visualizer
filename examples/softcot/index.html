@@ -1,0 +1,392 @@
+<title>SoftCoT &amp; SoftCoT++ — The Mechanism</title>
+<style>
+  :root {
+    --bg: #F6F7F9;
+    --surface: #FFFFFF;
+    --ink: #1A2230;
+    --muted: #5A6577;
+    --line: #E3E7ED;
+    --scratch: #B87A1E;
+    --latent: #5B4FCF;
+    --gate: #2F8F72;
+    --train: #C4487A;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #10141C; --surface: #171C26; --ink: #E6E9F0; --muted: #8A94A5; --line: #262D3A; --scratch: #E0A64C; --latent: #9B90F0; --gate: #6FCBA4; --train: #EB7CA8; }
+  }
+  :root[data-theme="light"] { --bg: #F6F7F9; --surface: #FFFFFF; --ink: #1A2230; --muted: #5A6577; --line: #E3E7ED; --scratch: #B87A1E; --latent: #5B4FCF; --gate: #2F8F72; --train: #C4487A; }
+  :root[data-theme="dark"]  { --bg: #10141C; --surface: #171C26; --ink: #E6E9F0; --muted: #8A94A5; --line: #262D3A; --scratch: #E0A64C; --latent: #9B90F0; --gate: #6FCBA4; --train: #EB7CA8; }
+
+  html { background: var(--bg); }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; margin: 0; }
+  .wrap { max-width: 800px; margin: 0 auto; padding: 40px 24px 64px; }
+  .eyebrow { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  h1 { font-size: 24px; font-weight: 650; margin: 0 0 6px; letter-spacing: -.01em; text-wrap: balance; }
+  .credit { font-size: 12.5px; color: var(--muted); margin: 0 0 18px; line-height: 1.6; }
+  .credit a { color: var(--muted); }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin-bottom: 18px; }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  .stage { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 4px; margin-bottom: 16px; }
+  canvas { display: block; width: 100%; height: auto; border-radius: 7px; }
+
+  .caption { min-height: 4.8em; font-size: 15.5px; line-height: 1.55; margin-bottom: 16px; text-wrap: balance; }
+  .caption em { color: var(--ink); font-style: normal; font-weight: 600; }
+  .caption code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13.5px; background: color-mix(in srgb, var(--train) 12%, var(--surface)); border-radius: 4px; padding: 1px 6px; }
+
+  .controls { display: flex; align-items: center; gap: 14px; }
+  button { font: inherit; font-size: 14px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 7px; padding: 8px 16px; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  button:not(:disabled):hover { border-color: var(--train); }
+
+  .dots { display: flex; gap: 5px; margin-left: auto; flex-wrap: wrap; max-width: 240px; justify-content: flex-end; }
+  .dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: all .2s; }
+  .dots span.active { background: var(--train); width: 16px; border-radius: 4px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">concept-visualizer · example · PhD-level companion</p>
+  <h1>SoftCoT &amp; SoftCoT++ — The Mechanism</h1>
+  <p class="credit">
+    Grounded in Xu et al., <a href="https://arxiv.org/abs/2502.12134">SoftCoT (arXiv:2502.12134)</a> and
+    <a href="https://arxiv.org/abs/2505.11484">SoftCoT++ (arXiv:2505.11484)</a>.
+    Accessible version: <a href="../latent-reasoning/">Scratchpad vs. Latent Reasoning</a>.
+  </p>
+
+  <div class="legend">
+    <span class="item"><span class="swatch" style="background:var(--scratch)"></span>discrete / vocabulary grid</span>
+    <span class="item"><span class="swatch" style="background:var(--latent)"></span>soft thought (continuous)</span>
+    <span class="item"><span class="swatch" style="background:var(--train)"></span>trainable (gradients flow here)</span>
+    <span class="item"><span class="swatch" style="background:var(--gate)"></span>result / verified metric</span>
+  </div>
+
+  <div class="stage"><canvas id="stage" width="1280" height="920"></canvas></div>
+  <p class="caption" id="caption"></p>
+
+  <div class="controls">
+    <button id="prev">← Prev</button>
+    <button id="next">Next →</button>
+    <div class="dots" id="dots"></div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  // ---- fixed geometry: one composition throughout (upper = embedding
+  // space / results, lower = the two-model pipeline). Nothing here moves
+  // between steps; only what's drawn ON it changes (rule 2).
+  const STAGE_TOP = { x0: 90, y0: 60, x1: 1190, y1: 400 };
+  const ASSIST = { x0: 120, y0: 560, x1: 420, y1: 730 };
+  const PROJ   = { x0: 500, y0: 590, x1: 660, y1: 700 };
+  const BACK   = { x0: 740, y0: 560, x1: 1160, y1: 730 };
+
+  const GRID_COLS = 9, GRID_ROWS = 5;
+  const gridPts = [];
+  for (let r = 0; r < GRID_ROWS; r++) for (let c = 0; c < GRID_COLS; c++) {
+    gridPts.push({ x: lerp(STAGE_TOP.x0 + 40, STAGE_TOP.x1 - 40, c / (GRID_COLS - 1)), y: lerp(STAGE_TOP.y0 + 40, STAGE_TOP.y1 - 30, r / (GRID_ROWS - 1)) });
+  }
+  const DISCRETE_PATH_IDX = [11, 22, 25, 34, 41];
+  const FREE_PT = { x: (STAGE_TOP.x0 + STAGE_TOP.x1) / 2, y: STAGE_TOP.y0 + 130 };
+
+  // ---- state: every field a plain number, lerped frame-by-frame (rule 4)
+  const states = [
+    { gridAlpha: 1,    freeAlpha: 0, pipeAlpha: 0, tokenAlpha: 0, projAlpha: 0, flowT: 0, flowAlpha: 0, gradAlpha: 0, bars1: 0, multi: 0, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.3,  freeAlpha: 1, pipeAlpha: 0, tokenAlpha: 0, projAlpha: 0, flowT: 0, flowAlpha: 0, gradAlpha: 0, bars1: 0, multi: 0, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.15, freeAlpha: 1, pipeAlpha: 1, tokenAlpha: 0, projAlpha: 0, flowT: 0, flowAlpha: 0, gradAlpha: 0, bars1: 0, multi: 0, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.15, freeAlpha: 1, pipeAlpha: 1, tokenAlpha: 1, projAlpha: 0, flowT: 0,   flowAlpha: 1, gradAlpha: 0, bars1: 0, multi: 0, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.15, freeAlpha: 1, pipeAlpha: 1, tokenAlpha: 1, projAlpha: 1, flowT: 0.5, flowAlpha: 1, gradAlpha: 0, bars1: 0, multi: 0, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.15, freeAlpha: 1, pipeAlpha: 1, tokenAlpha: 1, projAlpha: 1, flowT: 1,   flowAlpha: 1, gradAlpha: 1, bars1: 0, multi: 0, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.1,  freeAlpha: 0.2, pipeAlpha: 0.35, tokenAlpha: 0.2, projAlpha: 0.35, flowT: 1, flowAlpha: 0.2, gradAlpha: 0, bars1: 1, multi: 0, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.1,  freeAlpha: 1, pipeAlpha: 1, tokenAlpha: 1, projAlpha: 1, flowT: 1, flowAlpha: 1, gradAlpha: 0, bars1: 0, multi: 0, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.1,  freeAlpha: 0.15, pipeAlpha: 1, tokenAlpha: 1, projAlpha: 1, flowT: 1, flowAlpha: 0.3, gradAlpha: 0, bars1: 0, multi: 1, spread: 0, formulaAlpha: 0, bars2: 0, close: 0 },
+    { gridAlpha: 0.1,  freeAlpha: 0.15, pipeAlpha: 1, tokenAlpha: 1, projAlpha: 1, flowT: 1, flowAlpha: 0.3, gradAlpha: 0, bars1: 0, multi: 1, spread: 1, formulaAlpha: 1, bars2: 0, close: 0 },
+    { gridAlpha: 0.08, freeAlpha: 0.1, pipeAlpha: 0.35, tokenAlpha: 0.2, projAlpha: 0.35, flowT: 1, flowAlpha: 0.15, gradAlpha: 0, bars1: 0, multi: 0.35, spread: 1, formulaAlpha: 0.3, bars2: 1, close: 0 },
+    { gridAlpha: 0.05, freeAlpha: 0.15, pipeAlpha: 0.3, tokenAlpha: 0.15, projAlpha: 0.3, flowT: 1, flowAlpha: 0.1, gradAlpha: 0, bars1: 0, multi: 0.2, spread: 1, formulaAlpha: 0.15, bars2: 0.3, close: 1 },
+    { gridAlpha: 0.05, freeAlpha: 0.15, pipeAlpha: 0.3, tokenAlpha: 0.15, projAlpha: 0.3, flowT: 1, flowAlpha: 0.1, gradAlpha: 0, bars1: 0, multi: 0.2, spread: 1, formulaAlpha: 0.15, bars2: 0.3, close: 1 },
+  ];
+
+  const captions = [
+    "A discrete chain-of-thought step is a jump to the nearest point the vocabulary allows — every real token lives at a fixed coordinate in this space.",
+    "Free the step from the grid: a vector that can sit <em>anywhere</em> in the space, not just on an allowed point. That's the core idea of latent reasoning, before any architecture is shown.",
+    "Where does that free vector actually come from? Two frozen language models. Nothing here has been fine-tuned — yet.",
+    "The frozen <em>assistant</em> model reads the question plus N placeholder tokens. Its final-layer hidden states at exactly those placeholder positions — that's the raw soft thought (SoftCoT, arXiv:2502.12134).",
+    "A single trainable linear layer, <code>Linear: ℝ^d_assist → ℝ^d_LLM</code>, bridges the two models' spaces. It is the only trainable part of this entire system.",
+    "The projected soft thoughts are spliced onto <code>[Instruction, Question]</code> feeding the frozen backbone. 4–6 soft vectors stand in for what would be ~24 discrete tokens. Backprop reaches only the projection layer — both language models stay exactly as they were.",
+    "LLaMA-3.1-8B-Instruct, averaged across five benchmarks: zero-shot CoT 68.21% → SoftCoT 70.52%. And because both models stay frozen, none of the catastrophic-forgetting risk that fully fine-tuning a backbone for latent reasoning carries.",
+    "One problem: this pipeline is deterministic. Same question, same soft thought, every single time — no equivalent of temperature sampling for the thinking stage.",
+    "SoftCoT++'s fix: swap the N identical placeholder tokens for M distinct specialized ones. The same frozen assistant, fed M different inputs, now produces M genuinely different soft thoughts.",
+    "A contrastive loss pushes those M vectors explicitly apart during training — maximizing pairwise distance beyond what different placeholders alone would give you.",
+    "M soft thoughts → M full reasoning chains from the frozen backbone → majority vote. LLaMA-3.1-8B: 81.96% → 82.64%. Qwen3-8B: 88.65% → 90.05%. Combine both scaling axes (10 thoughts × 10 chains) and GSM8K moves 90.99% → 92.71%.",
+    "The authors are direct about what's still open: exploration of the latent thought distribution is <em>\"preliminary,\"</em> tested only at 8B-parameter inference scale with frozen backbones — and no reported latency numbers despite the compression claim.",
+    "Name the exact tensor that's opaque: <code>T_soft</code>, the projected soft thought. There is no vocabulary lookup that turns it back into words — nothing to read. That's \"the scratchpad is legible, the latent path isn't,\" at the level of an actual tensor.",
+  ];
+
+  let current = 0, animStart = null;
+  const DURATION = 550;
+
+  function interpState(t) {
+    const cur = states[current], from = current === 0 ? cur : states[current - 1];
+    const s = {};
+    for (const k in cur) s[k] = lerp(from[k], cur[k], t);
+    return s;
+  }
+
+  function box(r, alpha, label, sub, color, dashed) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color; ctx.lineWidth = 3;
+    if (dashed) ctx.setLineDash([8, 6]);
+    ctx.strokeRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+    ctx.setLineDash([]);
+    ctx.font = '600 18px -apple-system, sans-serif';
+    ctx.fillStyle = cssVar('--ink');
+    ctx.textAlign = 'center';
+    ctx.fillText(label, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2 - 4);
+    if (sub) {
+      ctx.font = '12px ui-monospace, monospace';
+      ctx.fillStyle = cssVar('--muted');
+      ctx.fillText(sub, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2 + 18);
+    }
+    ctx.restore();
+  }
+
+  function arrow(x1, y1, x2, y2, alpha, color, dashed) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 3;
+    if (dashed) ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.setLineDash([]);
+    const a = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - 14 * Math.cos(a - 0.4), y2 - 14 * Math.sin(a - 0.4));
+    ctx.lineTo(x2 - 14 * Math.cos(a + 0.4), y2 - 14 * Math.sin(a + 0.4));
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawGrid(alpha) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = cssVar('--scratch');
+    gridPts.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI); ctx.fill(); });
+    ctx.strokeStyle = cssVar('--scratch'); ctx.lineWidth = 3;
+    ctx.beginPath();
+    DISCRETE_PATH_IDX.forEach((idx, i) => {
+      const p = gridPts[idx];
+      i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+    DISCRETE_PATH_IDX.forEach(idx => {
+      const p = gridPts[idx];
+      ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, 2 * Math.PI); ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  function drawFree(alpha) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = cssVar('--latent');
+    ctx.beginPath(); ctx.arc(FREE_PT.x, FREE_PT.y, 9, 0, 2 * Math.PI); ctx.fill();
+    ctx.font = '600 13px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('T_soft', FREE_PT.x, FREE_PT.y - 18);
+    ctx.restore();
+  }
+
+  function drawPipeline(s) {
+    box(ASSIST, s.pipeAlpha, 'Assistant LM', 'frozen', cssVar('--muted'), true);
+    box(BACK, s.pipeAlpha, 'Backbone LLM', 'frozen', cssVar('--muted'), true);
+    if (s.projAlpha > 0.01) {
+      box(PROJ, s.projAlpha, 'Linear', 'trainable', cssVar('--train'), false);
+      arrow(ASSIST.x1, (ASSIST.y0 + ASSIST.y1) / 2, PROJ.x0, (PROJ.y0 + PROJ.y1) / 2, s.projAlpha, cssVar('--muted'), false);
+      arrow(PROJ.x1, (PROJ.y0 + PROJ.y1) / 2, BACK.x0, (BACK.y0 + BACK.y1) / 2, s.projAlpha, cssVar('--muted'), false);
+    } else {
+      arrow(ASSIST.x1, (ASSIST.y0 + ASSIST.y1) / 2, BACK.x0, (BACK.y0 + BACK.y1) / 2, s.pipeAlpha, cssVar('--muted'), false);
+    }
+    if (s.tokenAlpha > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = s.tokenAlpha;
+      const tokens = ['[instr]', '[Q]', '[UNK]', '[UNK]', '[UNK]', '[UNK]'];
+      let tx = ASSIST.x0 + 10;
+      tokens.forEach(tok => {
+        ctx.strokeStyle = cssVar('--line'); ctx.lineWidth = 1.5;
+        ctx.strokeRect(tx, ASSIST.y0 - 44, 44, 26);
+        ctx.font = '10px ui-monospace, monospace';
+        ctx.fillStyle = cssVar('--muted');
+        ctx.textAlign = 'center';
+        ctx.fillText(tok, tx + 22, ASSIST.y0 - 27);
+        tx += 50;
+      });
+      ctx.restore();
+    }
+    if (s.flowAlpha > 0.01) {
+      const p0 = { x: ASSIST.x1, y: (ASSIST.y0 + ASSIST.y1) / 2 };
+      const p1 = { x: PROJ.x0, y: (PROJ.y0 + PROJ.y1) / 2 };
+      const p2 = { x: BACK.x0, y: (BACK.y0 + BACK.y1) / 2 };
+      let fx, fy;
+      if (s.flowT < 0.5) { const tt = s.flowT / 0.5; fx = lerp(p0.x, p1.x, tt); fy = lerp(p0.y, p1.y, tt); }
+      else { const tt = (s.flowT - 0.5) / 0.5; fx = lerp(p1.x, p2.x, tt); fy = lerp(p1.y, p2.y, tt); }
+      ctx.save();
+      ctx.globalAlpha = s.flowAlpha;
+      ctx.fillStyle = cssVar('--latent');
+      ctx.beginPath(); ctx.arc(fx, fy, 8, 0, 2 * Math.PI); ctx.fill();
+      ctx.restore();
+    }
+    if (s.gradAlpha > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = s.gradAlpha;
+      ctx.font = '600 12px ui-monospace, monospace';
+      ctx.fillStyle = cssVar('--train');
+      ctx.textAlign = 'center';
+      ctx.fillText('∇ flows here only', (PROJ.x0 + PROJ.x1) / 2, PROJ.y1 + 26);
+      arrow(PROJ.x1 - 10, PROJ.y1 + 14, PROJ.x0 + 10, PROJ.y1 + 14, s.gradAlpha, cssVar('--train'), false);
+      ctx.font = '11px ui-monospace, monospace';
+      ctx.fillStyle = cssVar('--muted');
+      ctx.fillText('blocked', (ASSIST.x0 + ASSIST.x1) / 2, ASSIST.y1 + 26);
+      ctx.fillText('blocked', (BACK.x0 + BACK.x1) / 2, BACK.y1 + 26);
+      ctx.restore();
+    }
+  }
+
+  function drawBars1(alpha) {
+    if (alpha <= 0.01) return;
+    const data = [{ label: 'zero-shot CoT', v: 68.21 }, { label: 'SoftCoT', v: 70.52 }];
+    drawBarPair(data, alpha, 'LLaMA-3.1-8B · avg of 5 benchmarks');
+  }
+  function drawBars2(alpha) {
+    if (alpha <= 0.01) return;
+    const data = [{ label: 'SoftCoT-SC', v: 81.96 }, { label: 'SoftCoT++', v: 82.64 }, { label: 'SoftCoT-SC (Qwen3)', v: 88.65 }, { label: 'SoftCoT++ (Qwen3)', v: 90.05 }];
+    drawBarPair(data, alpha, 'self-consistency vs. contrastive test-time scaling');
+  }
+  function drawBarPair(data, alpha, sub) {
+    const baseY = STAGE_TOP.y1 - 20, top = STAGE_TOP.y0 + 30;
+    const bw = 90, gap = 40;
+    const totalW = data.length * bw + (data.length - 1) * gap;
+    let x = (STAGE_TOP.x0 + STAGE_TOP.x1) / 2 - totalW / 2;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = '12px ui-monospace, monospace';
+    ctx.fillStyle = cssVar('--muted');
+    ctx.textAlign = 'center';
+    ctx.fillText(sub, (STAGE_TOP.x0 + STAGE_TOP.x1) / 2, top - 10);
+    data.forEach(d => {
+      const h = (d.v / 100) * (baseY - top);
+      ctx.fillStyle = cssVar('--gate');
+      ctx.fillRect(x, baseY - h, bw, h);
+      ctx.fillStyle = cssVar('--ink');
+      ctx.font = '600 13px ui-monospace, monospace';
+      ctx.fillText(d.v.toFixed(2) + '%', x + bw / 2, baseY - h - 10);
+      ctx.font = '11px -apple-system, sans-serif';
+      ctx.fillStyle = cssVar('--muted');
+      ctx.fillText(d.label, x + bw / 2, baseY + 18);
+      x += bw + gap;
+    });
+    ctx.restore();
+  }
+
+  function drawMulti(s) {
+    if (s.multi <= 0.01) return;
+    const cx = FREE_PT.x, cy = FREE_PT.y;
+    const M = 4;
+    ctx.save();
+    ctx.globalAlpha = s.multi;
+    for (let i = 0; i < M; i++) {
+      const a = (i / M) * 2 * Math.PI;
+      const dist = lerp(6, 70, s.spread);
+      const x = cx + dist * Math.cos(a), y = cy + dist * Math.sin(a) * 0.7;
+      ctx.fillStyle = cssVar('--latent');
+      ctx.beginPath(); ctx.arc(x, y, 7, 0, 2 * Math.PI); ctx.fill();
+      if (s.spread > 0.05) {
+        ctx.strokeStyle = cssVar('--train'); ctx.globalAlpha = s.multi * s.spread * 0.5; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke();
+        ctx.globalAlpha = s.multi;
+      }
+    }
+    ctx.restore();
+    if (s.formulaAlpha > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = s.formulaAlpha;
+      ctx.font = '600 15px ui-monospace, monospace';
+      ctx.fillStyle = cssVar('--train');
+      ctx.textAlign = 'center';
+      ctx.fillText('L_cl = −Σ log( exp(Tᵏ·Tᵏ) / Σⱼ exp(Tᵏ·Tʲ) )', cx, cy + 110);
+      ctx.restore();
+    }
+  }
+
+  function drawClose(alpha) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = cssVar('--latent');
+    ctx.beginPath(); ctx.arc(FREE_PT.x, FREE_PT.y, 14, 0, 2 * Math.PI); ctx.fill();
+    ctx.strokeStyle = cssVar('--train'); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(FREE_PT.x, FREE_PT.y, 24, 0, 2 * Math.PI); ctx.stroke();
+    ctx.font = '600 16px ui-monospace, monospace';
+    ctx.fillStyle = cssVar('--ink');
+    ctx.textAlign = 'center';
+    ctx.fillText('T_soft — no vocabulary lookup exists for this', FREE_PT.x, FREE_PT.y - 40);
+    ctx.restore();
+  }
+
+  function render(ts) {
+    if (animStart === null) animStart = ts;
+    const t = Math.min(1, (ts - animStart) / DURATION);
+    ctx.clearRect(0, 0, W, H);
+    const s = interpState(t);
+
+    ctx.save();
+    ctx.strokeStyle = cssVar('--line'); ctx.globalAlpha = 0.6; ctx.lineWidth = 1;
+    ctx.strokeRect(STAGE_TOP.x0, STAGE_TOP.y0, STAGE_TOP.x1 - STAGE_TOP.x0, STAGE_TOP.y1 - STAGE_TOP.y0);
+    ctx.restore();
+
+    drawGrid(s.gridAlpha);
+    drawFree(s.freeAlpha);
+    drawMulti(s);
+    drawBars1(s.bars1);
+    drawBars2(s.bars2);
+    drawClose(s.close);
+    drawPipeline(s);
+
+    if (t < 1) requestAnimationFrame(render);
+  }
+
+  function goTo(i) {
+    current = Math.max(0, Math.min(states.length - 1, i));
+    animStart = null;
+    requestAnimationFrame(render);
+    document.getElementById('caption').innerHTML = captions[current];
+    document.getElementById('prev').disabled = current === 0;
+    document.getElementById('next').disabled = current === states.length - 1;
+    document.querySelectorAll('#dots span').forEach((d, idx) => d.classList.toggle('active', idx === current));
+  }
+
+  document.getElementById('dots').innerHTML = states.map(() => '<span></span>').join('');
+  document.getElementById('prev').onclick = () => goTo(current - 1);
+  document.getElementById('next').onclick = () => goTo(current + 1);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') goTo(current + 1);
+    if (e.key === 'ArrowLeft') goTo(current - 1);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestAnimationFrame(render));
+  new MutationObserver(() => requestAnimationFrame(render)).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  goTo(0);
+</script>

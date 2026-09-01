@@ -59,6 +59,8 @@ examples/
     render/attention-scores.mp4   a committed sample render (see below)
   latent-reasoning/
     index.html             scratchpad vs. latent reasoning, HTML explainer
+  softcot/
+    index.html             SoftCoT / SoftCoT++ mechanism, HTML explainer
 ```
 
 ## Using the skill in Claude Code
@@ -77,7 +79,19 @@ No install needed — just open the file:
 open examples/rope-rotation/index.html
 open examples/attention-scores/index.html
 open examples/latent-reasoning/index.html
+open examples/softcot/index.html
 ```
+
+`softcot` is the PhD-level companion to `latent-reasoning`: same underlying
+topic, but mechanistically accurate rather than allegorical — grounded in
+[SoftCoT](https://arxiv.org/abs/2502.12134) and
+[SoftCoT++](https://arxiv.org/abs/2505.11484) (Xu et al.). It walks through
+the actual architecture (a frozen assistant model, a single trainable linear
+projection, a frozen backbone LLM), the real training regime (only the
+projection layer ever gets a gradient), and SoftCoT++'s contrastive
+test-time-scaling mechanism — with real reported numbers, not illustrative
+ones, and the authors' own stated limitations included rather than omitted.
+A companion Manim video for this example is in progress.
 
 `latent-reasoning` is a third kind of example: not a canonical ML mechanism
 like the two above, but a visualization of an argument from Ram Kumar's essays
