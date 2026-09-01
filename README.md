@@ -10,6 +10,9 @@ video, never a wall of prose.
 This project is an independent, unaffiliated homage to that teaching style.
 It is not produced, reviewed, or endorsed by Grant Sanderson or 3Blue1Brown.
 
+![The SoftCoT example mid-walkthrough: a discrete vocabulary grid, a free soft-thought vector, and the frozen-assistant / trainable-projection / frozen-backbone pipeline](docs/softcot-preview.png)
+<sub>`examples/softcot/index.html`, step 5 of 12 — the full write-up is in [`examples/softcot/`](examples/softcot/).</sub>
+
 It produces output in two formats from one shared outline:
 
 - **An interactive HTML page** — `<canvas>`-driven, click-through (Prev/Next,
@@ -59,8 +62,12 @@ examples/
     render/attention-scores.mp4   a committed sample render (see below)
   latent-reasoning/
     index.html             scratchpad vs. latent reasoning, HTML explainer
+    scene_mechanism.py      PhD-level companion, as a ManimCE Scene
+    render/latent-reasoning-mechanism.mp4   committed sample render
   softcot/
     index.html             SoftCoT / SoftCoT++ mechanism, HTML explainer
+docs/
+  softcot-preview.png       README screenshot (see below)
 ```
 
 ## Using the skill in Claude Code
@@ -91,7 +98,11 @@ projection, a frozen backbone LLM), the real training regime (only the
 projection layer ever gets a gradient), and SoftCoT++'s contrastive
 test-time-scaling mechanism — with real reported numbers, not illustrative
 ones, and the authors' own stated limitations included rather than omitted.
-A companion Manim video for this example is in progress.
+There's also a Manim video covering the same mechanism, one step deeper into
+the architecture than the HTML page — see `latent-reasoning/scene_mechanism.py`
+below (it lives there rather than in `softcot/` for historical reasons: it
+was authored as the mechanistic companion to `latent-reasoning` before
+`softcot/` existed as its own example).
 
 `latent-reasoning` is a third kind of example: not a canonical ML mechanism
 like the two above, but a visualization of an argument from Ram Kumar's essays
@@ -123,10 +134,29 @@ uv run manim -pqh examples/attention-scores/scene.py AttentionScores   # final, 
 
 `-p` previews the result after rendering; `-q{l,m,h,k}` sets quality. Output
 lands in `./media/videos/<scene-file>/<quality>/<SceneName>.mp4` — that
-`media/` directory is Manim's render cache and is gitignored. The one
-finished render this repo ships (`examples/attention-scores/render/attention-scores.mp4`,
-720p30, ~840KB, 16s) was copied out of that cache by hand; do the same if you
-want to commit a render of your own.
+`media/` directory is Manim's render cache and is gitignored. The two
+finished renders this repo ships were copied out of that cache by hand; do
+the same if you want to commit a render of your own:
+
+- `examples/attention-scores/render/attention-scores.mp4` — 720p30, ~840KB, 16s
+- `examples/latent-reasoning/render/latent-reasoning-mechanism.mp4` — 720p30,
+  ~4.4MB, 92s
+
+Both use `Text.set_default(font="Arial")` rather than leaving Manim on its
+bundled default font, and avoid two related pitfalls learned the hard way
+while building the second video: (1) Manim's bundled default renders as a
+dated, low-contrast serif on macOS, and (2) some other fonts that look fine
+in isolation — "Helvetica Neue" among them — are `.ttc` font collections that
+Pango mis-shapes here, producing broken mid-word kerning. Arial, Verdana, and
+Tahoma (all standalone `.ttf` files) were verified to shape correctly; Arial
+was picked for its neutral, technical tone. Separately: never call
+`.scale()`/`.set(width=...)` on an already-built `Text()` mobject, and never
+`Transform()` between two differently-shaped `Text()` mobjects without a
+`.become()` snap-back immediately after the `self.play(...)` — both
+corrupt glyph spacing in ways that only show up in the specific
+strings/scale factors that happen to trigger them, not universally. See
+`scene_mechanism.py`'s `show_legend()` and any `beat_*` caption transition
+for the working pattern.
 
 ### LaTeX status
 
@@ -141,6 +171,31 @@ If you have (or install) a LaTeX distribution — e.g.
 `Text()` for `MathTex`/`Tex` calls yourself for properly typeset formulas.
 This repo does not depend on that being installed; the examples render fully
 without it.
+
+## Reviewing an example with a collaborator
+
+For visual feedback or Q&A on a specific explainer — a data scientist
+pointing at a step and asking "why is this framed this way?" instead of a
+screenshot-and-explain round trip — this repo uses
+[`lavish-axi`](https://github.com/kunchenguid/lavish-axi), installed as a
+project-scoped skill at `.agents/skills/lavish` (symlinked for Claude Code).
+It opens any of the HTML examples in a local browser review session: a
+reviewer selects an element or a range of text, leaves an annotation or asks
+a question, and that feedback queues up for the agent to address —
+in-session, not a separate document.
+
+```bash
+npx -y lavish-axi examples/softcot/index.html   # open a review session
+npx -y lavish-axi poll examples/softcot/index.html   # (agent-side) wait for feedback
+```
+
+Local-first by default — no cloud involved unless the reviewer isn't on the
+same machine/network, in which case `lavish-axi share` publishes a link to
+[ht-ml.app](https://ht-ml.app) (a third-party host), optionally
+password-protected with `--private`. Note the skill installer flags this
+package as **medium risk** on its own security assessment (full agent
+permissions, third-party npm package) — review it yourself before relying on
+it for anything sensitive.
 
 ## License
 

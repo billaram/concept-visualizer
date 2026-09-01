@@ -24,3 +24,10 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# lavish-axi skill install — .claude/skills/lavish symlinks into .agents/,
+# which symlinks into a local npm cache path; neither is portable across
+# machines/clones. skills-lock.json IS committed (portable manifest) so
+# `npx skills` can reproduce the same install. See README.md.
+.agents/
+.claude/skills/lavish
