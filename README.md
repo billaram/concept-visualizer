@@ -57,6 +57,8 @@ examples/
     index.html             Q·Kᵀ → softmax, HTML explainer
     scene.py                the same concept as a ManimCE Scene
     render/attention-scores.mp4   a committed sample render (see below)
+  latent-reasoning/
+    index.html             scratchpad vs. latent reasoning, HTML explainer
 ```
 
 ## Using the skill in Claude Code
@@ -74,7 +76,18 @@ No install needed — just open the file:
 ```bash
 open examples/rope-rotation/index.html
 open examples/attention-scores/index.html
+open examples/latent-reasoning/index.html
 ```
+
+`latent-reasoning` is a third kind of example: not a canonical ML mechanism
+like the two above, but a visualization of an argument from Ram Kumar's essays
+[*"The Scratchpad Is Not the Mind"*](https://medium.com/@billaram/the-scratchpad-is-not-the-mind-41e89b741928)
+and [*"The Transcript Is Not the World"*](https://medium.com/@billaram/the-transcript-is-not-the-world-b534180bcf7a) —
+chain-of-thought as legible cognitive offloading vs. latent reasoning as a
+faster but unauditable continuous path, resolved by a neurosymbolic
+"checkable gate" between what a model proposes and what gets trusted. It
+shows the skill works for original research arguments, not just textbook
+concepts — HTML only for now, no Manim scene yet.
 
 ## Running/rendering the Manim examples
 

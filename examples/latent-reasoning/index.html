@@ -1,0 +1,281 @@
+<title>Scratchpad vs. Latent Reasoning — Visualized</title>
+<style>
+  :root {
+    --bg: #F6F7F9;
+    --surface: #FFFFFF;
+    --ink: #1A2230;
+    --muted: #5A6577;
+    --line: #E3E7ED;
+    --scratch: #B87A1E;
+    --latent: #5B4FCF;
+    --gate: #2F8F72;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #10141C; --surface: #171C26; --ink: #E6E9F0; --muted: #8A94A5; --line: #262D3A; --scratch: #E0A64C; --latent: #9B90F0; --gate: #5FC7A4; }
+  }
+  :root[data-theme="light"] { --bg: #F6F7F9; --surface: #FFFFFF; --ink: #1A2230; --muted: #5A6577; --line: #E3E7ED; --scratch: #B87A1E; --latent: #5B4FCF; --gate: #2F8F72; }
+  :root[data-theme="dark"]  { --bg: #10141C; --surface: #171C26; --ink: #E6E9F0; --muted: #8A94A5; --line: #262D3A; --scratch: #E0A64C; --latent: #9B90F0; --gate: #5FC7A4; }
+
+  html { background: var(--bg); }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; margin: 0; }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 40px 24px 64px; }
+  .eyebrow { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  h1 { font-size: 24px; font-weight: 650; margin: 0 0 6px; letter-spacing: -.01em; text-wrap: balance; }
+  .credit { font-size: 12.5px; color: var(--muted); margin: 0 0 18px; }
+  .credit a { color: var(--muted); }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 18px; }
+  .legend .item { display: flex; align-items: center; gap: 7px; }
+  .legend .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  .stage { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 4px; margin-bottom: 16px; }
+  canvas { display: block; width: 100%; height: auto; border-radius: 7px; }
+
+  .caption { min-height: 4.4em; font-size: 16px; line-height: 1.55; margin-bottom: 16px; text-wrap: balance; }
+  .caption em { color: var(--ink); font-style: normal; font-weight: 600; }
+
+  .controls { display: flex; align-items: center; gap: 14px; }
+  button { font: inherit; font-size: 14px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 7px; padding: 8px 16px; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  button:not(:disabled):hover { border-color: var(--latent); }
+
+  .dots { display: flex; gap: 6px; margin-left: auto; }
+  .dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: all .2s; }
+  .dots span.active { background: var(--latent); width: 18px; border-radius: 4px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">concept-visualizer · example</p>
+  <h1>Scratchpad vs. Latent Reasoning</h1>
+  <p class="credit">Based on Ram Kumar's essays
+    <a href="https://medium.com/@billaram/the-scratchpad-is-not-the-mind-41e89b741928">"The Scratchpad Is Not the Mind"</a> and
+    <a href="https://medium.com/@billaram/the-transcript-is-not-the-world-b534180bcf7a">"The Transcript Is Not the World"</a>
+  </p>
+
+  <div class="legend">
+    <span class="item"><span class="swatch" style="background:var(--scratch)"></span>scratchpad (chain-of-thought)</span>
+    <span class="item"><span class="swatch" style="background:var(--latent)"></span>latent path (continuous)</span>
+    <span class="item"><span class="swatch" style="background:var(--gate)"></span>checkable gate</span>
+  </div>
+
+  <div class="stage"><canvas id="stage" width="1280" height="760"></canvas></div>
+  <p class="caption" id="caption"></p>
+
+  <div class="controls">
+    <button id="prev">← Prev</button>
+    <button id="next">Next →</button>
+    <div class="dots" id="dots"></div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // The held metaphor: one Question node, one Answer node, fixed for the
+  // whole page. Everything that follows — the chain of legible stepping
+  // stones, the smooth latent curve, the lens, the gate — is a different
+  // way of drawing the SAME journey between these two fixed points. No new
+  // diagram is ever introduced.
+  const Q = { x: 190, y: 430 };
+  const A = { x: 1090, y: 430 };
+  const CHAIN_CTRL = { x: 640, y: 190 };   // high arch: long path, discrete stops
+  const LATENT_CTRL = { x: 640, y: 470 };  // low direct arc: short, continuous
+  const STONE_T = [0.14, 0.32, 0.5, 0.68, 0.86];
+  const STONE_LABELS = ['"First, note that…"', '"So, given X…"', '"Which implies…"', '"Checking: does this hold?"', '"Therefore…"'];
+
+  function bezier(p0, ctrl, p1, t) {
+    const x = (1 - t) * (1 - t) * p0.x + 2 * (1 - t) * t * ctrl.x + t * t * p1.x;
+    const y = (1 - t) * (1 - t) * p0.y + 2 * (1 - t) * t * ctrl.y + t * t * p1.y;
+    return { x, y };
+  }
+
+  // One state per step. Every field is a plain number so it can be lerped
+  // frame-by-frame — nothing here is an instant swap (rule 4).
+  const states = [
+    { chainAlpha: 0,   latentAlpha: 0,   lensChain: 0, lensLatent: 0, gateAlpha: 0 },
+    { chainAlpha: 1,   latentAlpha: 0,   lensChain: 0, lensLatent: 0, gateAlpha: 0 },
+    { chainAlpha: 0.35,latentAlpha: 1,   lensChain: 0, lensLatent: 0, gateAlpha: 0 },
+    { chainAlpha: 1,   latentAlpha: 1,   lensChain: 0, lensLatent: 0, gateAlpha: 0 },
+    { chainAlpha: 1,   latentAlpha: 1,   lensChain: 1, lensLatent: 0, gateAlpha: 0 },
+    { chainAlpha: 1,   latentAlpha: 1,   lensChain: 0, lensLatent: 1, gateAlpha: 0 },
+    { chainAlpha: 1,   latentAlpha: 0.7, lensChain: 0, lensLatent: 0, gateAlpha: 1 },
+    { chainAlpha: 1,   latentAlpha: 0.22,lensChain: 0, lensLatent: 0, gateAlpha: 0.35 },
+  ];
+
+  const captions = [
+    "A question. An answer. Something happens in between — but what, exactly?",
+    "One way: write it out loud. Each step is a readable phrase — <em>this is the scratchpad</em>. Chain-of-thought, made of actual words you could check.",
+    "Another way: skip the narration entirely. Move through the space directly, with no waypoints to read — <em>this is latent reasoning</em>, thinking in a continuous vector space instead of tokens.",
+    "The direct path is shorter. Kumar's essay cites models reasoning up to <em>11.6× more efficiently</em> this way — no need to spell out every intermediate word.",
+    "Zoom into a scratchpad step and there's something there: an actual claim, in English, that a human — or another model — could read and challenge.",
+    "Zoom into the same point on the latent path and — nothing. A coordinate in a space with no words for it. Faster, but there's nothing left to audit.",
+    "Kumar's broader proposal, from a companion essay: don't force the choice. Let a fast, latent process <em>propose</em> — but require a legible, checkable gate before anything is <em>trusted</em>. “Neural proposes, symbolic decides.”",
+    "The irony he lands on: the slow, wordy, inefficient monologue we're so eager to optimize away might be the most valuable thing we'd be giving up.",
+  ];
+
+  let current = 0;
+  let animStart = null;
+  const DURATION = 550;
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function interpState(t) {
+    const cur = states[current];
+    const from = current === 0 ? cur : states[current - 1];
+    const s = {};
+    for (const k in cur) s[k] = lerp(from[k], cur[k], t);
+    return s;
+  }
+
+  function drawNode(p, label) {
+    ctx.save();
+    ctx.fillStyle = cssVar('--ink');
+    ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 2 * Math.PI); ctx.fill();
+    ctx.font = '600 16px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, p.x, p.y - 20);
+    ctx.restore();
+  }
+
+  function drawChain(alpha) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = cssVar('--scratch');
+    ctx.lineWidth = 3;
+    ctx.setLineDash([2, 7]);
+    ctx.beginPath();
+    for (let t = 0; t <= 1; t += 0.02) {
+      const p = bezier(Q, CHAIN_CTRL, A, t);
+      t === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    STONE_T.forEach((t, i) => {
+      const p = bezier(Q, CHAIN_CTRL, A, t);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = cssVar('--scratch');
+      ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, 2 * Math.PI); ctx.fill();
+      ctx.font = '12px ui-monospace, monospace';
+      ctx.fillStyle = cssVar('--muted');
+      ctx.textAlign = 'center';
+      ctx.fillText(STONE_LABELS[i], p.x, p.y - 16);
+      ctx.restore();
+    });
+  }
+
+  function drawLatent(alpha) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = cssVar('--latent');
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    for (let t = 0; t <= 1; t += 0.02) {
+      const p = bezier(Q, LATENT_CTRL, A, t);
+      t === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawLens(alpha, onChain) {
+    if (alpha <= 0.01) return;
+    const t = 0.5;
+    const p = onChain ? bezier(Q, CHAIN_CTRL, A, t) : bezier(Q, LATENT_CTRL, A, t);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = cssVar('--ink');
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(p.x, p.y - 90, 46, 0, 2 * Math.PI); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(p.x + 32, p.y - 58); ctx.lineTo(p.x + 4, p.y - 5);
+    ctx.stroke();
+    ctx.font = '600 15px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    if (onChain) {
+      ctx.fillStyle = cssVar('--scratch');
+      ctx.fillText('"So, given X…"', p.x, p.y - 86);
+      ctx.font = '11px ui-monospace, monospace';
+      ctx.fillStyle = cssVar('--muted');
+      ctx.fillText('legible', p.x, p.y - 68);
+    } else {
+      ctx.fillStyle = cssVar('--latent');
+      ctx.font = '600 26px ui-monospace, monospace';
+      ctx.fillText('?', p.x, p.y - 82);
+      ctx.font = '11px ui-monospace, monospace';
+      ctx.fillStyle = cssVar('--muted');
+      ctx.fillText('opaque', p.x, p.y - 68);
+    }
+    ctx.restore();
+  }
+
+  function drawGate(alpha) {
+    if (alpha <= 0.01) return;
+    const gx = A.x - 70, gy = A.y;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = cssVar('--gate');
+    ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(gx, gy - 60); ctx.lineTo(gx, gy + 60); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gx + 18, gy - 60); ctx.lineTo(gx + 18, gy + 60); ctx.stroke();
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(gx - 8, gy - 2); ctx.lineTo(gx + 2, gy + 12); ctx.lineTo(gx + 24, gy - 24);
+    ctx.stroke();
+    ctx.font = '600 12px ui-monospace, monospace';
+    ctx.fillStyle = cssVar('--gate');
+    ctx.textAlign = 'center';
+    ctx.fillText('checkable gate', gx + 8, gy + 84);
+    ctx.restore();
+  }
+
+  function render(ts) {
+    if (animStart === null) animStart = ts;
+    const t = Math.min(1, (ts - animStart) / DURATION);
+    ctx.clearRect(0, 0, W, H);
+
+    const s = interpState(t);
+    drawChain(s.chainAlpha);
+    drawLatent(s.latentAlpha);
+    drawNode(Q, 'Question');
+    drawNode(A, 'Answer');
+    drawLens(s.lensChain, true);
+    drawLens(s.lensLatent, false);
+    drawGate(s.gateAlpha);
+
+    if (t < 1) requestAnimationFrame(render);
+  }
+
+  function goTo(i) {
+    current = Math.max(0, Math.min(states.length - 1, i));
+    animStart = null;
+    requestAnimationFrame(render);
+    document.getElementById('caption').innerHTML = captions[current];
+    document.getElementById('prev').disabled = current === 0;
+    document.getElementById('next').disabled = current === states.length - 1;
+    document.querySelectorAll('#dots span').forEach((d, idx) => d.classList.toggle('active', idx === current));
+  }
+
+  document.getElementById('dots').innerHTML = states.map(() => '<span></span>').join('');
+  document.getElementById('prev').onclick = () => goTo(current - 1);
+  document.getElementById('next').onclick = () => goTo(current + 1);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') goTo(current + 1);
+    if (e.key === 'ArrowLeft') goTo(current - 1);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestAnimationFrame(render));
+  new MutationObserver(() => requestAnimationFrame(render)).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  goTo(0);
+</script>
