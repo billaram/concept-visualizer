@@ -1,0 +1,26 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Manim render cache (keep final exported .mp4s we deliberately commit;
+# this only ignores the intermediate media/ working tree Manim generates
+# next to whichever .py file you render).
+media/
+**/media/
+*.mp4.bak
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp

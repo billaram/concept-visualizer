@@ -1,0 +1,287 @@
+<title>Attention Scores — Visualized</title>
+<style>
+  :root {
+    --bg: #F6F7F9;
+    --surface: #FFFFFF;
+    --ink: #1A2230;
+    --muted: #5A6577;
+    --line: #E3E7ED;
+    --q: #3B62C4;
+    --k: #C4763B;
+    --w: #D4A017;
+    --out: #7A3FA0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #10141C; --surface: #171C26; --ink: #E6E9F0; --muted: #8A94A5; --line: #262D3A; --q: #82A3F2; --k: #F0A468; --w: #F0C24D; --out: #C79BEA; }
+  }
+  :root[data-theme="light"] { --bg: #F6F7F9; --surface: #FFFFFF; --ink: #1A2230; --muted: #5A6577; --line: #E3E7ED; --q: #3B62C4; --k: #C4763B; --w: #D4A017; --out: #7A3FA0; }
+  :root[data-theme="dark"]  { --bg: #10141C; --surface: #171C26; --ink: #E6E9F0; --muted: #8A94A5; --line: #262D3A; --q: #82A3F2; --k: #F0A468; --w: #F0C24D; --out: #C79BEA; }
+
+  html { background: var(--bg); }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; margin: 0; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px 64px; }
+  .eyebrow { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  h1 { font-size: 24px; font-weight: 650; margin: 0 0 18px; letter-spacing: -.01em; text-wrap: balance; }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 18px; }
+  .legend .item { display: flex; align-items: center; gap: 7px; }
+  .legend .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  .stage { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 4px; margin-bottom: 16px; }
+  canvas { display: block; width: 100%; height: auto; border-radius: 7px; }
+
+  .caption { min-height: 3.6em; font-size: 16px; line-height: 1.55; margin-bottom: 16px; text-wrap: balance; }
+  .caption .formula { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14.5px; background: color-mix(in srgb, var(--w) 16%, var(--surface)); border-radius: 4px; padding: 1px 6px; }
+
+  .controls { display: flex; align-items: center; gap: 14px; }
+  button { font: inherit; font-size: 14px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 7px; padding: 8px 16px; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  button:not(:disabled):hover { border-color: var(--q); }
+
+  .dots { display: flex; gap: 6px; margin-left: auto; }
+  .dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: all .2s; }
+  .dots span.active { background: var(--q); width: 18px; border-radius: 4px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">concept-visualizer · example</p>
+  <h1>Attention Scores: Q·Kᵀ, then Softmax</h1>
+
+  <div class="legend">
+    <span class="item"><span class="swatch" style="background:var(--q)"></span>Q (query vector)</span>
+    <span class="item"><span class="swatch" style="background:var(--k)"></span>Kᵢ (key vectors)</span>
+    <span class="item"><span class="swatch" style="background:var(--w)"></span>attention weight (score → softmax)</span>
+    <span class="item"><span class="swatch" style="background:var(--out)"></span>blended output</span>
+  </div>
+
+  <div class="stage"><canvas id="stage" width="1280" height="760"></canvas></div>
+  <p class="caption" id="caption"></p>
+
+  <div class="controls">
+    <button id="prev">← Prev</button>
+    <button id="next">Next →</button>
+    <div class="dots" id="dots"></div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const O = { x: 300, y: 300 };
+  const R = 160;
+  const DEG = Math.PI / 180;
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // The held metaphor: one query vector Q (fixed) and four key vectors
+  // K1..K4 (fixed angles, geometry never changes). Everything that follows
+  // — raw scores, softmax weights, the blended output — is a *derived*
+  // visual on top of these same six fixed directions. No new diagram is
+  // ever introduced; only annotations of this one picture.
+  const Q_ANGLE = 90;
+  const K_ANGLES = [60, 130, 200, 20];
+  const K_LABELS = ['K1', 'K2', 'K3', 'K4'];
+
+  // Raw dot-product-style scores (illustrative, but ordered consistently
+  // with how aligned each key's angle is with Q — K1 is closest to Q and
+  // scores highest, K3 is nearly opposite and scores negative).
+  const RAW_SCORES = [2.4, 1.7, -1.1, 0.3];
+  // softmax(RAW_SCORES), computed once, used for the blend + bar labels.
+  const EXP = RAW_SCORES.map((v) => Math.exp(v));
+  const EXP_SUM = EXP.reduce((a, b) => a + b, 0);
+  const PROBS = EXP.map((v) => v / EXP_SUM); // ≈ [0.606, 0.301, 0.018, 0.074]
+
+  const BAR_X = [820, 930, 1040, 1150];
+  const BAR_W = 70;
+  const CHART_BOTTOM = 600; // softmax baseline (bars only grow upward)
+  const CHART_MID = 470;    // raw-score zero line (bars can go negative)
+  const CHART_TOP = 340;
+
+  // Each entry is one geometric/visual state of the SAME picture — the
+  // query, the four keys, the weight bars, the earned formula, and
+  // finally the blended output. Every field here is a number (or a plain
+  // array of numbers) so it can be lerped frame-by-frame (rule 4).
+  const states = [
+    { kAlpha: [1, 0, 0, 0], barAlpha: 0, barPx: [0, 0, 0, 0], barsSoftmax: 0, vectorsDim: 1, formulaAlpha: 0, blendAlpha: 0 },
+    { kAlpha: [1, 1, 1, 1], barAlpha: 0, barPx: [0, 0, 0, 0], barsSoftmax: 0, vectorsDim: 1, formulaAlpha: 0, blendAlpha: 0 },
+    { kAlpha: [1, 1, 1, 1], barAlpha: 1, barPx: [190, 135, -88, 24], barsSoftmax: 0, vectorsDim: 1, formulaAlpha: 0, blendAlpha: 0 },
+    { kAlpha: [1, 1, 1, 1], barAlpha: 1, barPx: [210, 105, 8, 25], barsSoftmax: 1, vectorsDim: 1, formulaAlpha: 0, blendAlpha: 0 },
+    { kAlpha: [1, 1, 1, 1], barAlpha: 1, barPx: [210, 105, 8, 25], barsSoftmax: 1, vectorsDim: 0.55, formulaAlpha: 1, blendAlpha: 0 },
+    { kAlpha: [1, 1, 1, 1], barAlpha: 1, barPx: [210, 105, 8, 25], barsSoftmax: 1, vectorsDim: 0.85, formulaAlpha: 0.4, blendAlpha: 1 },
+  ];
+
+  const captions = [
+    "A query and a key are each just a vector — meaning encoded as a direction. Nothing has been compared yet.",
+    "In real attention there isn't one key, there's one per token in context. Four keys, one query, all candidates for its attention.",
+    "The raw score is a dot product: how far each key's direction lines up with the query's. Aligned keys score high; a near-opposite key scores negative.",
+    "Softmax turns those raw scores into a probability distribution — every weight positive, all four summing to one. The best-aligned key now dominates.",
+    "Made precise: <span class=\"formula\">score(Q,Kᵢ) = Q · Kᵢᵀ / √d</span>, then <span class=\"formula\">weightᵢ = softmax(score)ᵢ</span>. Scale by √d first so the softmax doesn't saturate on high-dimensional vectors.",
+    "Those weights blend the keys (and, in a real transformer, their attached value vectors) into one output — mostly K1's direction, a little of K2's, almost none of K3's.",
+  ];
+
+  let current = 0;
+  let animStart = null;
+  const DURATION = 550;
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function lerpAny(a, b, t) { return Array.isArray(a) ? a.map((v, i) => lerp(v, b[i], t)) : lerp(a, b, t); }
+
+  function interpState(t) {
+    const cur = states[current];
+    const from = current === 0 ? cur : states[current - 1];
+    const s = {};
+    for (const key in cur) s[key] = lerpAny(from[key], cur[key], t);
+    return s;
+  }
+
+  function drawVector(angleDeg, color, alpha, label, len, dashed) {
+    if (alpha <= 0.01) return;
+    const a = -angleDeg * DEG; // canvas y grows down; flip for counter-clockwise
+    const x = O.x + len * Math.cos(a), y = O.y + len * Math.sin(a);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 5;
+    if (dashed) ctx.setLineDash([10, 8]);
+    ctx.beginPath(); ctx.moveTo(O.x, O.y); ctx.lineTo(x, y); ctx.stroke();
+    ctx.setLineDash([]);
+    const headA = Math.atan2(O.y - y, x - O.x);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - 18 * Math.cos(headA - 0.35), y + 18 * Math.sin(headA - 0.35));
+    ctx.lineTo(x - 18 * Math.cos(headA + 0.35), y + 18 * Math.sin(headA + 0.35));
+    ctx.closePath(); ctx.fill();
+    ctx.font = '600 20px -apple-system, sans-serif';
+    ctx.fillText(label, x + (x > O.x ? 14 : -34), y + (y > O.y ? 24 : -12));
+    ctx.restore();
+  }
+
+  function drawBars(s) {
+    if (s.barAlpha <= 0.01) return;
+    const baselineY = lerp(CHART_MID, CHART_BOTTOM, s.barsSoftmax);
+
+    ctx.save();
+    ctx.globalAlpha = s.barAlpha * 0.6;
+    ctx.strokeStyle = cssVar('--line');
+    ctx.beginPath(); ctx.moveTo(BAR_X[0] - 60, baselineY); ctx.lineTo(BAR_X[3] + 60, baselineY); ctx.stroke();
+    ctx.restore();
+
+    // "sum = 1" reference fades in exactly as bars morph into softmax mode.
+    if (s.barsSoftmax > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = s.barAlpha * s.barsSoftmax * 0.7;
+      ctx.strokeStyle = cssVar('--muted');
+      ctx.setLineDash([4, 5]);
+      ctx.beginPath(); ctx.moveTo(BAR_X[0] - 60, CHART_TOP); ctx.lineTo(BAR_X[3] + 60, CHART_TOP); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = '600 13px ui-monospace, monospace';
+      ctx.fillStyle = cssVar('--muted');
+      ctx.fillText('Σ weightᵢ = 1', BAR_X[3] - 30, CHART_TOP - 10);
+      ctx.restore();
+    }
+
+    for (let i = 0; i < 4; i++) {
+      const val = s.barPx[i];
+      const x = BAR_X[i];
+      const topY = baselineY - val;
+      const barTop = Math.min(topY, baselineY), barBottom = Math.max(topY, baselineY);
+      ctx.save();
+      ctx.globalAlpha = s.barAlpha;
+      ctx.fillStyle = cssVar('--w');
+      ctx.fillRect(x - BAR_W / 2, barTop, BAR_W, Math.max(2, barBottom - barTop));
+      ctx.restore();
+
+      ctx.save();
+      ctx.font = '600 13px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = cssVar('--muted');
+      ctx.globalAlpha = s.barAlpha;
+      ctx.fillText(K_LABELS[i], x, CHART_BOTTOM + 24);
+
+      // Cross-fade the raw-score label into the softmax-percent label as
+      // the bars themselves morph — never an instant text swap.
+      const labelY = barTop - 10;
+      ctx.fillStyle = cssVar('--ink');
+      ctx.globalAlpha = s.barAlpha * (1 - s.barsSoftmax);
+      ctx.fillText(RAW_SCORES[i].toFixed(1), x, labelY);
+      ctx.globalAlpha = s.barAlpha * s.barsSoftmax;
+      ctx.fillText(Math.round(PROBS[i] * 100) + '%', x, labelY);
+      ctx.restore();
+    }
+  }
+
+  function drawFormula(alpha) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = '600 22px ui-monospace, monospace';
+    ctx.fillStyle = cssVar('--ink');
+    ctx.textAlign = 'left';
+    ctx.fillText('score(Q,Kᵢ) = Q · Kᵢᵀ / √d', 40, 640);
+    ctx.font = '600 18px ui-monospace, monospace';
+    ctx.fillStyle = cssVar('--muted');
+    ctx.fillText('weightᵢ = softmax(score)ᵢ', 40, 672);
+    ctx.restore();
+  }
+
+  function drawBlend(alpha) {
+    if (alpha <= 0.01) return;
+    let sx = 0, sy = 0;
+    for (let i = 0; i < 4; i++) {
+      const a = -K_ANGLES[i] * DEG;
+      sx += PROBS[i] * Math.cos(a);
+      sy += PROBS[i] * Math.sin(a);
+    }
+    const blendDeg = -Math.atan2(sy, sx) / DEG;
+    drawVector(blendDeg, cssVar('--out'), alpha, 'output', R * 0.72, true);
+  }
+
+  function render(ts) {
+    if (animStart === null) animStart = ts;
+    const t = Math.min(1, (ts - animStart) / DURATION);
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = cssVar('--line');
+    ctx.beginPath(); ctx.arc(O.x, O.y, R, 0, 2 * Math.PI); ctx.stroke();
+    ctx.restore();
+
+    const s = interpState(t);
+    drawVector(Q_ANGLE, cssVar('--q'), s.vectorsDim, 'Q', R);
+    for (let i = 0; i < 4; i++) {
+      drawVector(K_ANGLES[i], cssVar('--k'), s.kAlpha[i] * s.vectorsDim, K_LABELS[i], R);
+    }
+    drawBlend(s.blendAlpha);
+    drawBars(s);
+    drawFormula(s.formulaAlpha);
+
+    if (t < 1) requestAnimationFrame(render);
+  }
+
+  function goTo(i) {
+    current = Math.max(0, Math.min(states.length - 1, i));
+    animStart = null;
+    requestAnimationFrame(render);
+    document.getElementById('caption').innerHTML = captions[current];
+    document.getElementById('prev').disabled = current === 0;
+    document.getElementById('next').disabled = current === states.length - 1;
+    document.querySelectorAll('#dots span').forEach((d, idx) => d.classList.toggle('active', idx === current));
+  }
+
+  document.getElementById('dots').innerHTML = states.map(() => '<span></span>').join('');
+  document.getElementById('prev').onclick = () => goTo(current - 1);
+  document.getElementById('next').onclick = () => goTo(current + 1);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') goTo(current + 1);
+    if (e.key === 'ArrowLeft') goTo(current - 1);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestAnimationFrame(render));
+  new MutationObserver(() => requestAnimationFrame(render)).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  goTo(0);
+</script>

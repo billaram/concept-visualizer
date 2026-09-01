@@ -1,0 +1,225 @@
+<title>Rotary Position Embeddings — Visualized</title>
+<style>
+  :root {
+    --bg: #F6F7F9;
+    --surface: #FFFFFF;
+    --ink: #1A2230;
+    --muted: #5A6577;
+    --line: #E3E7ED;
+    --q: #3B62C4;
+    --k: #C4763B;
+    --arc: #3F8F6E;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #10141C; --surface: #171C26; --ink: #E6E9F0; --muted: #8A94A5; --line: #262D3A; --q: #82A3F2; --k: #F0A468; --arc: #6FCBA4; }
+  }
+  :root[data-theme="light"] { --bg: #F6F7F9; --surface: #FFFFFF; --ink: #1A2230; --muted: #5A6577; --line: #E3E7ED; --q: #3B62C4; --k: #C4763B; --arc: #3F8F6E; }
+  :root[data-theme="dark"]  { --bg: #10141C; --surface: #171C26; --ink: #E6E9F0; --muted: #8A94A5; --line: #262D3A; --q: #82A3F2; --k: #F0A468; --arc: #6FCBA4; }
+
+  html { background: var(--bg); }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; margin: 0; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 40px 24px 64px; }
+  .eyebrow { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  h1 { font-size: 24px; font-weight: 650; margin: 0 0 18px; letter-spacing: -.01em; text-wrap: balance; }
+
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 18px; }
+  .legend .item { display: flex; align-items: center; gap: 7px; }
+  .legend .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  .stage { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 4px; margin-bottom: 16px; }
+  canvas { display: block; width: 100%; height: auto; border-radius: 7px; }
+
+  .caption { min-height: 3.4em; font-size: 16px; line-height: 1.55; margin-bottom: 16px; text-wrap: balance; }
+  .caption .formula { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14.5px; background: color-mix(in srgb, var(--q) 12%, var(--surface)); border-radius: 4px; padding: 1px 6px; }
+
+  .controls { display: flex; align-items: center; gap: 14px; }
+  button { font: inherit; font-size: 14px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 7px; padding: 8px 16px; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  button:not(:disabled):hover { border-color: var(--q); }
+
+  .dots { display: flex; gap: 6px; margin-left: auto; }
+  .dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--line); transition: all .2s; }
+  .dots span.active { background: var(--q); width: 18px; border-radius: 4px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">concept-visualizer · example</p>
+  <h1>Rotary Position Embeddings</h1>
+
+  <div class="legend">
+    <span class="item"><span class="swatch" style="background:var(--q)"></span>Q (query vector)</span>
+    <span class="item"><span class="swatch" style="background:var(--k)"></span>K (key vector)</span>
+    <span class="item"><span class="swatch" style="background:var(--arc)"></span>angle between them</span>
+  </div>
+
+  <div class="stage"><canvas id="stage" width="1280" height="760"></canvas></div>
+  <p class="caption" id="caption"></p>
+
+  <div class="controls">
+    <button id="prev">← Prev</button>
+    <button id="next">Next →</button>
+    <div class="dots" id="dots"></div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const O = { x: W * 0.42, y: H * 0.56 };
+  const R = 230;
+  const DEG = Math.PI / 180;
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // Each step is one geometric state of the SAME two vectors, Q and K.
+  // Nothing here is a new diagram — every step transforms what came before.
+  const states = [
+    { qAngle: 0,   kAngle: 0,   kAlpha: 0, arcAlpha: 0, ticksAlpha: 1, formulaAlpha: 0, multiAlpha: 0, mainAlpha: 1 },
+    { qAngle: 72,  kAngle: 72,  kAlpha: 0, arcAlpha: 0, ticksAlpha: 1, formulaAlpha: 0, multiAlpha: 0, mainAlpha: 1 },
+    { qAngle: 72,  kAngle: 18,  kAlpha: 1, arcAlpha: 1, ticksAlpha: 0, formulaAlpha: 0, multiAlpha: 0, mainAlpha: 1 },
+    { qAngle: 126, kAngle: 72,  kAlpha: 1, arcAlpha: 1, ticksAlpha: 0, formulaAlpha: 0, multiAlpha: 0, mainAlpha: 1 },
+    { qAngle: 126, kAngle: 72,  kAlpha: 1, arcAlpha: 1, ticksAlpha: 0, formulaAlpha: 1, multiAlpha: 0, mainAlpha: 1 },
+    { qAngle: 126, kAngle: 72,  kAlpha: 1, arcAlpha: 1, ticksAlpha: 0, formulaAlpha: 1, multiAlpha: 1, mainAlpha: 0.35 },
+  ];
+
+  const captions = [
+    "A content vector — one dimension-pair of a query, say — carries meaning but no sense of <em>where</em> it sits in the sequence. It just points somewhere.",
+    "RoPE's move: turn position into an angle. Rotate the vector by <span class=\"formula\">angle = position × θ</span>. Position 0, 1, 2, 3, 4 &mdash; the vector sweeps around like a clock hand.",
+    "Do this to a query at position <b>m</b> and a key at position <b>n</b> independently. Two rotated vectors, and a gap opens between them — the angle Δ.",
+    "Now slide both positions forward by the same amount (m→m+3, n→n+3). Watch the gap: it doesn't move. Δ only ever depended on <b>m − n</b>.",
+    "That's the whole trick, made precise: <span class=\"formula\">qₘ · kₙ = q · R((m−n)θ) · k</span>. The attention score between two rotated vectors is a function of their <em>relative</em> position only — no lookup table required.",
+    "Real RoPE does this across many dimension-pairs at once, each rotating at its own frequency — like a clock's second, minute, and hour hands. Fast pairs resolve nearby tokens; slow pairs resolve distant structure.",
+  ];
+
+  let current = 0;
+  let animStart = null;
+  const DURATION = 550;
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  function interpState(t) {
+    const cur = states[current];
+    const from = current === 0 ? cur : states[current - 1];
+    const s = {};
+    for (const key in cur) s[key] = lerp(from[key], cur[key], t);
+    return s;
+  }
+
+  function drawVector(angleDeg, color, alpha, label) {
+    if (alpha <= 0.01) return;
+    const a = -angleDeg * DEG; // canvas y grows down; flip for counter-clockwise
+    const x = O.x + R * Math.cos(a), y = O.y + R * Math.sin(a);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(O.x, O.y); ctx.lineTo(x, y); ctx.stroke();
+    const headA = Math.atan2(O.y - y, x - O.x);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - 18 * Math.cos(headA - 0.35), y + 18 * Math.sin(headA - 0.35));
+    ctx.lineTo(x - 18 * Math.cos(headA + 0.35), y + 18 * Math.sin(headA + 0.35));
+    ctx.closePath(); ctx.fill();
+    ctx.font = '600 20px -apple-system, sans-serif';
+    ctx.fillText(label, x + (x > O.x ? 14 : -34), y + (y > O.y ? 22 : -10));
+    ctx.restore();
+  }
+
+  function drawArc(qDeg, kDeg, alpha) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = cssVar('--arc'); ctx.fillStyle = cssVar('--arc'); ctx.lineWidth = 3;
+    const a1 = -qDeg * DEG, a2 = -kDeg * DEG;
+    ctx.beginPath(); ctx.arc(O.x, O.y, 78, a2, a1, a1 < a2); ctx.stroke();
+    ctx.font = '600 17px ui-monospace, monospace';
+    const mid = -(qDeg + kDeg) / 2 * DEG;
+    ctx.fillText(`Δ = ${Math.abs(qDeg - kDeg).toFixed(0)}°`, O.x + 100 * Math.cos(mid), O.y + 100 * Math.sin(mid));
+    ctx.restore();
+  }
+
+  function drawTicks(alpha) {
+    if (alpha <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.7;
+    ctx.strokeStyle = cssVar('--muted'); ctx.fillStyle = cssVar('--muted');
+    ctx.font = '13px ui-monospace, monospace';
+    for (let p = 0; p <= 6; p++) {
+      const a = -(p * 18) * DEG;
+      const x1 = O.x + (R + 10) * Math.cos(a), y1 = O.y + (R + 10) * Math.sin(a);
+      const x2 = O.x + (R + 24) * Math.cos(a), y2 = O.y + (R + 24) * Math.sin(a);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.fillText(String(p), x2 + 4 * Math.cos(a), y2 + 4 * Math.sin(a) + 4);
+    }
+    ctx.restore();
+  }
+
+  function drawMulti(alpha) {
+    if (alpha <= 0.01) return;
+    const cx = O.x + 330, cy = O.y - 40, r = 46;
+    const speeds = [3, 1, 0.35];
+    const cols = [cssVar('--q'), cssVar('--arc'), cssVar('--k')];
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = '600 12px ui-monospace, monospace';
+    ctx.fillStyle = cssVar('--muted');
+    ctx.fillText('other dimension-pairs, other frequencies', cx - 110, cy - r - 16);
+    speeds.forEach((sp, i) => {
+      const a = -(performance.now() / 700 * sp) % (2 * Math.PI);
+      const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+      ctx.strokeStyle = cols[i]; ctx.fillStyle = cols[i]; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.globalAlpha = alpha * 0.15; ctx.stroke();
+      ctx.globalAlpha = alpha;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, 2 * Math.PI); ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  function render(ts) {
+    if (animStart === null) animStart = ts;
+    const t = Math.min(1, (ts - animStart) / DURATION);
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = cssVar('--line');
+    ctx.beginPath(); ctx.arc(O.x, O.y, R, 0, 2 * Math.PI); ctx.stroke();
+    ctx.restore();
+
+    const s = interpState(t);
+    drawTicks(s.ticksAlpha);
+    drawVector(s.qAngle, cssVar('--q'), s.mainAlpha, 'Q');
+    drawVector(s.kAngle, cssVar('--k'), s.kAlpha * s.mainAlpha, 'K');
+    drawArc(s.qAngle, s.kAngle, s.arcAlpha * s.mainAlpha);
+    drawMulti(s.multiAlpha);
+
+    if (t < 1 || s.multiAlpha > 0.5) requestAnimationFrame(render);
+  }
+
+  function goTo(i) {
+    current = Math.max(0, Math.min(states.length - 1, i));
+    animStart = null;
+    requestAnimationFrame(render);
+    document.getElementById('caption').innerHTML = captions[current];
+    document.getElementById('prev').disabled = current === 0;
+    document.getElementById('next').disabled = current === states.length - 1;
+    document.querySelectorAll('#dots span').forEach((d, idx) => d.classList.toggle('active', idx === current));
+  }
+
+  document.getElementById('dots').innerHTML = states.map(() => '<span></span>').join('');
+  document.getElementById('prev').onclick = () => goTo(current - 1);
+  document.getElementById('next').onclick = () => goTo(current + 1);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') goTo(current + 1);
+    if (e.key === 'ArrowLeft') goTo(current - 1);
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestAnimationFrame(render));
+  new MutationObserver(() => requestAnimationFrame(render)).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  goTo(0);
+</script>

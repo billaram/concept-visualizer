@@ -1,0 +1,10 @@
+[project]
+name = "concept-visualizer"
+version = "0.1.0"
+description = "A Claude Code skill (+ worked examples) for 3Blue1Brown-style, learner-driven concept explainers — as interactive HTML and as ManimCE video."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.13"
+dependencies = [
+    "manim>=0.21.0",
+]
